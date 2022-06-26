@@ -1,0 +1,187 @@
+### XGBoost Titanic Data
+
+```{r, include = FALSE}
+library(titanic)
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(mice)
+library(VIM)
+library(ranger)
+library(randomForest)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(e1071)
+library(xgboost)
+library(usemodels) #new package :)
+library(DALEXtra) #new package
+library(vip) #variable importance
+```
+
+Load Titanic Data from the titanic package. 
+```{r}
+titanic = titanic::titanic_train
+```
+
+Factor conversion. Several of our variables are categorical and should be converted to factors.  
+```{r}
+titanic = titanic %>% mutate(Survived = as_factor(Survived)) %>% 
+  mutate(Survived = fct_recode(Survived, "No" = "0", "Yes" = "1" )) %>%
+  mutate(Pclass = as_factor(Pclass)) %>% mutate(Sex = as.factor(Sex)) %>%
+  mutate(Embarked = as_factor(Embarked))
+titanic = titanic %>% mutate(Embarked = fct_recode(Embarked,Unknown = ""))
+titanic = titanic %>% select(c("Survived","Pclass","Sex","Age","SibSp","Parch"))
+set.seed(123)
+imp_age = mice(titanic, m=5, method='pmm', printFlag=FALSE) #imputes age
+titanic_complete = complete(imp_age) 
+summary(titanic_complete)
+```
+
+Training/testing split
+```{r}
+set.seed(123) 
+titanic_split = initial_split(titanic_complete, prop = 0.7, strata = Survived) #70% in training
+train = training(titanic_split) 
+test = testing(titanic_split)
+```
+
+###xgboost model
+```{r}
+use_xgboost(Survived ~., train) #comment me out before knitting
+```
+
+```{r}
+set.seed(123)
+folds = vfold_cv(train, v = 5)
+```
+
+Copy and paste the model from the use_xgboost function. Modify a few elements. We'll let R tune the parameters by looking at 25 plausible combinations of parameters.   
+```{r}
+start_time = Sys.time() #for timing
+
+xgboost_recipe <- 
+  recipe(formula = Survived ~ ., data = train) %>% 
+  #step_novel(all_nominal(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_zv(all_predictors()) 
+
+xgboost_spec <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+    loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost") 
+
+xgboost_workflow <- 
+  workflow() %>% 
+  add_recipe(xgboost_recipe) %>% 
+  add_model(xgboost_spec) 
+
+set.seed(77680)
+xgboost_tune <-
+  tune_grid(xgboost_workflow, resamples = folds, grid = 25)
+
+end_time = Sys.time()
+end_time - start_time
+```
+
+```{r}
+best_xgb = select_best(xgboost_tune, "accuracy")
+
+final_xgb = finalize_workflow(
+  xgboost_workflow,
+  best_xgb
+)
+
+final_xgb
+```
+
+```{r}
+#fit the finalized workflow to our training data
+final_xgb_fit = fit(final_xgb, train)
+```
+
+Let's take a look at variable importance before proceeding to SHAP values. We first extract the fit and then feed it to the "vip" function.  
+```{r}
+xg_mod = extract_fit_parsnip(final_xgb_fit)
+vip(xg_mod$fit)
+```
+
+Using DALEXtra package
+```{r}
+shap = explain_tidymodels(final_xgb_fit, train %>% select(-Survived), y = train$Survived == "Yes")
+```
+
+One of the particularly cool things about SHAP values is the ability to look at individual predictions and evaluate how the variables in the model contributed to that prediction.
+```{r}
+#isolate a passenger in row 5, a male, let's call him "joe"
+joe = train[5,]
+joe
+```
+
+```{r}
+predict(shap, joe)
+```
+
+```{r}
+set.seed(123)
+shap_joe = predict_parts(explainer = shap, 
+                      new_observation = joe, 
+                                 type = "shap",
+                                    B = 25) #number of random orderings of the predictors
+```
+
+```{r}
+plot(shap_joe)
+```
+
+```{r}
+#isolate a different passenger in row 618, a female, let's call her "sarah"
+sarah = train[618,]
+sarah
+```
+
+```{r}
+predict(shap, sarah)
+```
+
+```{r}
+set.seed(123)
+shap_sarah = predict_parts(explainer = shap, 
+                      new_observation = sarah, 
+                                 type = "shap",
+                                    B = 25) #number of random orderings of the predictors
+```
+
+```{r}
+plot(shap_sarah)
+```
+
+#### Partial Dependence Plots
+```{r}
+pdp_age = model_profile(explainer = shap, variables = "Age")
+```
+
+```{r}
+plot(pdp_age)
+```
+Grouped by class
+```{r}
+pdp_age_class = model_profile(explainer = shap, variables = "Age", groups = "Pclass")
+```
+
+```{r}
+plot(pdp_age_class)
+```
+
+Clustered partial dependence plot
+```{r}
+set.seed(123)
+pdp_age_clustered = model_profile(explainer = shap, variables = "Age", k = 5)
+```
+
+```{r}
+plot(pdp_age_clustered)
+```
+
+

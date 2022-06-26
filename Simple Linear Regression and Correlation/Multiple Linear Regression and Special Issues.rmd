@@ -1,0 +1,138 @@
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(glmnet)
+library(GGally)
+library(ggcorrplot)
+library(MASS)
+library(car)
+library(lubridate)
+library(lmtest)
+library(splines)
+library(esquisse)
+```
+```{r}
+library(readr)
+bike <- read_csv("bike_cleaned-3.csv")
+```
+```{r}
+bike = bike %>% mutate(dteday = mdy(dteday))
+bike = bike %>% mutate_if(is.character, as_factor)
+bike = bike %>% mutate(hr = as_factor(hr))
+```
+
+```{r}
+ggpairs(bike, columns = c(10:16))
+```
+```{r}
+esquisser(bike
+          )
+```
+```{r}
+ggplot(bike) +
+  aes(x = count, y = season) +
+  geom_boxplot(fill = "#112446") +
+  theme_minimal()
+```
+```{r}
+bike_recipe = recipe(count ~ hr, bike) %>%
+  step_dummy(hr)
+
+lm_model2 = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+lm_wflow2 = 
+  workflow() %>% 
+  add_model(lm_model2) %>% 
+  add_recipe(bike_recipe)
+
+lm_fit2 = fit(lm_wflow2, bike)
+```
+
+```{r}
+summary(lm_fit2$fit$fit$fit)
+```
+```{r}
+predict(lm_fit2, new_data = data.frame(hr = c("1","2","3","4","5","6","7","8","9","10","11","12","13","14","15","16","17","18","19","20","21","22","23","24")))
+```
+```{r}
+esquisser(bike)
+```
+```{r}
+ggplot(bike) +
+  aes(x = temp, y = count, colour = hr) +
+  geom_point(shape = "circle", size = 1.5) +
+  scale_color_hue(direction = 1) +
+  theme_minimal()
+```
+```{r}
+ride_recipe = recipe(count ~ hr + temp, bike) %>%
+  step_dummy(all_nominal())
+
+lm_model3 = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow3 = 
+  workflow() %>% 
+  add_model(lm_model3) %>% 
+  add_recipe(ride_recipe)
+
+lm_fit = fit(lm_wflow3, bike)
+```
+
+```{r}
+summary(lm_fit$fit$fit$fit)
+```
+```{r}
+ride2_recipe = recipe(count ~ temp + atemp, bike) %>%
+  step_dummy(all_nominal())
+
+lm_model4 = #give the model type a name 
+  linear_reg() %>% #specify that we are doing linear regression
+  set_engine("lm") #specify the specify type of linear tool we want to use 
+
+lm_wflow4 = 
+  workflow() %>% 
+  add_model(lm_model4) %>% 
+  add_recipe(ride2_recipe)
+
+lm_fit = fit(lm_wflow4, bike)
+```
+
+```{r}
+summary(lm_fit$fit$fit$fit)
+```
+```{r}
+car::vif(lm_fit$fit$fit$fit)
+```
+
+
+
+
+
+
+```{r}
+Bike2 = bike %>% dplyr::select("season","mnth", "hr","holiday", "weekday","workingday", "weathersit", "temp","atemp", "hum","count" ,"windspeed" )
+summary(Bike2
+        )
+```
+
+
+```{r}
+allmod = lm(count~., Bike2) 
+summary(allmod)
+```
+
+
+
+```{r}
+
+backmod = stepAIC(allmod, direction = "backward", trace = TRUE) #trace = TRUE shows how the model is built (which variables are removed)
+summary(backmod)
+```
+```{r}
+
+```
+
+

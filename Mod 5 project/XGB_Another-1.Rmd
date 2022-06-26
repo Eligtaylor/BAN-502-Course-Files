@@ -1,0 +1,166 @@
+### XGBoost Another Model
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(caret)
+library(mice)
+library(VIM)
+library(ranger)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(e1071)
+library(xgboost)
+library(usemodels)
+```
+
+```{r}
+churn = read_csv("churn.csv")
+```
+
+Data cleaning and preparation (as done before).  
+```{r}
+churn = churn %>% select(-customerID)
+churn = churn %>% mutate_if(is.character,as_factor)
+churn = churn %>% mutate(SeniorCitizen = as_factor(SeniorCitizen)) %>%
+  mutate(SeniorCitizen = fct_recode(SeniorCitizen, "No" = "0", "Yes" = "1"))
+churn = churn %>% drop_na()
+```
+
+Now we'll split the data.   
+```{r}
+set.seed(123) 
+churn_split = initial_split(churn, prop = 0.7, strata = Churn) #70% in training
+train = training(churn_split)
+test = testing(churn_split)
+```
+
+###xgboost model
+```{r}
+use_xgboost(Churn ~., train) #comment me out before knitting
+```
+
+Start with R-guided tuning.  
+This model required about 15 minutes for me to run.  
+```{r}
+set.seed(123)
+folds = vfold_cv(train, v = 5)
+```
+
+```{r}
+start_time = Sys.time() #for timing
+
+xgboost_recipe <- 
+  recipe(formula = Churn ~ ., data = train) %>% 
+  #step_novel(all_nominal(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_zv(all_predictors()) 
+
+xgboost_spec <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+    loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost") 
+
+xgboost_workflow <- 
+  workflow() %>% 
+  add_recipe(xgboost_recipe) %>% 
+  add_model(xgboost_spec) 
+
+set.seed(99786)
+xgboost_tune <-
+  tune_grid(xgboost_workflow, resamples = folds, grid = 25)
+
+end_time = Sys.time()
+end_time-start_time
+```
+Tips to reduce computation time:
+1. Reduce number of folds in k-fold cross-validation (I wouldn't go lower than 3)  
+2. Put less data in training set (Probably not lower than 50-60%)  
+3. Reduce size of parameter tuning grid  
+4. Worst case scenario: Sample from the dataframe (i.e., use 10,000 rows of 100,000 dataframe)  
+
+```{R}
+best_xgb = select_best(xgboost_tune, "accuracy")
+
+final_xgb = finalize_workflow(
+  xgboost_workflow,
+  best_xgb
+)
+
+final_xgb_fit = fit(final_xgb, train)
+```
+
+Saving
+```{r}
+saveRDS(final_xgb_fit,"churn_xgb_fit.rds")
+```
+
+```{r}
+predxgbtrain = predict(final_xgb_fit, train)
+confusionMatrix(train$Churn, predxgbtrain$.pred_class, positive="Yes")
+```
+
+```{r}
+predxgbtest = predict(final_xgb_fit, test)
+confusionMatrix(test$Churn, predxgbtest$.pred_class, positive="Yes")
+```
+
+Next up is an xgb model with considerable tuning.  
+```{r}
+start_time = Sys.time() #for timing
+
+tgrid = expand.grid(
+  trees = 100, #50, 100, and 150 in default 
+  min_n = 1, #fixed at 1 as default 
+  tree_depth = c(1,2,3,4), #1, 2, and 3 in default 
+  learn_rate = c(0.01, 0.1, 0.2, 0.3, 0.4), #0.3 and 0.4 in default 
+  loss_reduction = 0, #fixed at 0 in default 
+  sample_size = c(0.5, 0.8, 1)) #0.5, 0.75, and 1 in default, 
+
+xgboost_recipe <- 
+  recipe(formula = Churn ~ ., data = train) %>% 
+  #step_novel(all_nominal(), -all_outcomes()) %>% 
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE) %>% 
+  step_zv(all_predictors()) 
+
+xgboost_spec <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+    loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost") 
+
+xgboost_workflow <- 
+  workflow() %>% 
+  add_recipe(xgboost_recipe) %>% 
+  add_model(xgboost_spec) 
+
+set.seed(99786)
+xgboost_tune2 <-
+  tune_grid(xgboost_workflow, resamples = folds, grid = tgrid)
+
+end_time = Sys.time()
+end_time-start_time
+```
+```{R}
+best_xgb = select_best(xgboost_tune, "accuracy")
+
+final_xgb = finalize_workflow(
+  xgboost_workflow,
+  best_xgb
+)
+
+final_xgb_fit2 = fit(final_xgb, train)
+```
+
+```{r}
+predxgbtrain2 = predict(final_xgb_fit2, train)
+confusionMatrix(train$Churn, predxgbtrain2$.pred_class,positive="Yes")
+```
+
+```{r}
+predxgbtest2 = predict(final_xgb_fit2, test)
+confusionMatrix(test$Churn, predxgbtest2$.pred_class,positive="Yes")
+```
+

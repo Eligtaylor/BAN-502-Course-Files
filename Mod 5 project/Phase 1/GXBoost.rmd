@@ -1,0 +1,170 @@
+
+```{r, message=FALSE}
+library(tidyverse) # read in the packages I need
+library(tidymodels)
+library(ranger)
+library(RColorBrewer)
+library(rpart)
+library(rattle)
+library(e1071)
+library(xgboost)
+library(usemodels)
+library(caret)
+library(vip)
+library(DALEXtra)
+```
+
+
+```{r, message=FALSE}
+```
+
+
+```{r, message=FALSE}
+library(readr) #read in the data
+ames_student <- read_csv("ames_student.csv")
+```
+
+```{r}
+ames = ames_student %>%  select(Above_Median,Year_Built,Gr_Liv_Area,  Lot_Area, Full_Bath,Half_Bath, TotRms_AbvGrd, Year_Built,Year_Sold, Three_season_porch,Screen_Porch )
+#These were the variables that I found that seemed to be good predictions of the variable Above_Median
+```
+
+```{r}
+ames = ames %>% mutate(Above_Median = as_factor(Above_Median)) 
+  
+ames$TotBath <- ames$Full_Bath+ ames$Half_Bath
+ames$Porch <- ames$Three_season_porch+ames$Screen_Porch
+ames <- ames %>% select(-Full_Bath,-Half_Bath,-Three_season_porch,-Screen_Porch)
+#I decide to add both half bath and full bath together to create total bath as one variable. 
+#I decided that a three season porch and screen porch were similar enough to add them together as one variable
+#Once I created the new variables I subtracted the old variables out of the data set.
+```
+
+
+```{r}
+set.seed(123) 
+ames_split = initial_split(ames, prop = 0.7, strata = Above_Median) 
+train = training(ames_split)
+test = testing(ames_split)
+```
+
+```{r}
+#use_xgboost(Above_Median ~., train)
+```
+
+```{r}
+set.seed(123)
+folds = vfold_cv(train, v = 5)
+```
+
+
+
+```{r}
+tgrid = expand.grid(
+  trees = 50, 
+  min_n = 1, 
+  tree_depth = c(1,2,3), 
+  learn_rate = c(0.01, 0.1, 0.2, 0.3, 0.4), 
+  loss_reduction = 0,  
+  sample_size = c(0.5, 0.8, 1)) 
+
+xgboost_recipe <- 
+  recipe(formula = Above_Median ~ ., data = train) %>% 
+  step_zv(all_predictors()) 
+
+xgboost_spec <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), learn_rate = tune(), 
+    loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost") 
+
+xgboost_workflow <- 
+  workflow() %>% 
+  add_recipe(xgboost_recipe) %>% 
+  add_model(xgboost_spec) 
+
+set.seed(32710)
+xgboost_tune <-
+  tune_grid(xgboost_workflow, resamples = folds, grid = 25)
+
+
+```
+
+
+
+```{r}
+best_xgb = select_best(xgboost_tune, "accuracy")
+
+final_xgb = finalize_workflow(
+  xgboost_workflow,
+  best_xgb
+)
+
+final_xgb_fit = fit(final_xgb, train)
+```
+
+```{r}
+predxgbtrain = predict(final_xgb_fit, train)
+confusionMatrix(train$Above_Median, predxgbtrain$.pred_class, positive="Yes")
+```
+
+
+```{r}
+predxgbtest = predict(final_xgb_fit, test)
+confusionMatrix(test$Above_Median, predxgbtest$.pred_class, positive="Yes")
+```
+
+```{r}
+
+xg_mod = extract_fit_parsnip(final_xgb_fit)
+vip(xg_mod$fit)
+
+```
+
+```{r}
+shap = explain_tidymodels(final_xgb_fit, train %>% select(-Above_Median), y = train$Above_Median == "Yes")
+```
+
+
+```{r}
+house =train[3,]
+house
+```
+
+
+```{r}
+predict(shap,house)
+```
+
+
+
+```{r}
+set.seed(123)
+shap_house = predict_parts(explainer = shap, 
+                      new_observation = house, 
+                                 type = "shap",
+                                    B = 25)
+```
+
+```{r}
+plot(shap_house)
+```
+
+
+```{r}
+pdp_Size_class = model_profile(explainer = shap, variables = "Gr_Liv_Area", groups = "TotBath")
+```
+
+```{r}
+plot(pdp_Size_class)
+```
+
+```{r}
+set.seed(123)
+pdp_Size_clustered = model_profile(explainer = shap, variables = "Gr_Liv_Area", k = 5)
+```
+
+```{r}
+plot(pdp_Size_clustered)
+```
+

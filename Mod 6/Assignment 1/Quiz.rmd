@@ -1,0 +1,127 @@
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(cluster)
+library(factoextra)
+library(dendextend)
+library(esquisse)
+```
+
+```{r}
+library(readr)
+trucks_1 <- read_csv("trucks-1.csv")
+summary (trucks_1)
+```
+
+```{r}
+esquisser (trucks_1)
+```
+
+```{r}
+ggplot(trucks_1) +
+  aes(x = Speeding, y = Distance) +
+  geom_point(shape = "circle", size = 1.5, colour = "#112446") +
+  theme_minimal()
+
+
+ggplot(trucks_1) +
+  aes(x = Distance, y = Speeding) +
+  geom_point(shape = "circle", size = 1.5, colour = "#112446") +
+  theme_minimal()
+```
+
+```{r}
+kmeans_recipe = recipe(~ Distance + Speeding, trucks_1) 
+
+trucks_dummy = kmeans_recipe %>% 
+  #step_dummy(all_nominal(), one_hot = TRUE) %>%
+  step_scale(all_numeric()) %>%
+  step_center(all_numeric()) 
+
+trucks_dummy = prep(trucks_dummy, trucks_1) #prepares the recipe
+
+trucks_cleaned = bake(trucks_dummy, trucks_1)
+```
+
+```{r}
+summary(trucks_cleaned)
+``` 
+
+
+```{r}
+set.seed(64)
+kclust = kmeans(trucks_cleaned, centers = 2) #run k-means clustering with k = 2
+kclust
+```
+
+```{r}
+trucks_1= augment(kclust, trucks_1)
+trucks_1
+```
+
+```{r}
+ggplot(trucks_1, aes(Distance, Speeding, color = .cluster)) +
+  geom_point(alpha = 0.4) + theme_bw()
+```
+
+```{r}
+set.seed(412)
+clusts = 
+  tibble(k = 1:8) %>%
+  mutate(
+    kclust = map(k, ~kmeans(trucks_cleaned, .x)),
+    tidied = map(kclust, tidy),
+    glanced = map(kclust, glance),
+    augmented = map(kclust, augment, trucks_cleaned)
+  )
+
+clusts
+```
+
+```{r}
+clusters = 
+  clusts %>%
+  unnest(cols = c(tidied))
+
+assignments = 
+  clusts %>% 
+  unnest(cols = c(augmented))
+
+clusterings = 
+  clusts %>%
+  unnest(cols = c(glanced))
+```
+
+```{r}
+p1 = 
+  ggplot(assignments, aes(x = Distance, y = Speeding)) +
+  geom_point(aes(color = .cluster), alpha = 0.8) + 
+  facet_wrap(~ k)
+p1
+```
+
+
+
+
+```{r}
+ggplot(clusterings, aes(k, tot.withinss)) +
+  geom_line() +
+  geom_point()
+```
+
+```{r}
+set.seed(64)
+kclust = kmeans(trucks_cleaned, centers = 4) #run k-means clustering with k = 2
+kclust
+```
+
+```{r}
+trucks_1= augment(kclust, trucks_1)
+trucks_1
+```
+
+```{r}
+ggplot(trucks_1, aes(Distance, Speeding, color = .cluster)) +
+  geom_point(alpha = 0.4) + theme_bw()
+```
+

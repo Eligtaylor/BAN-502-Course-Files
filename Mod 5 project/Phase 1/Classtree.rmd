@@ -1,0 +1,302 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+#  Elizabeth Taylor BAN 502 Predictive Analytics 
+
+---
+output:
+  word_document: default
+  html_document: default
+editor_options: 
+  chunk_output_type: inline
+---
+```{r,  message=FALSE}
+library(tidyverse) # read in the packages I need
+library(tidymodels)
+library(GGally) #ggcorr and ggpairs
+library(ggcorrplot) #correlation plot alternative
+library(gridExtra) #create grids of plots
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(caret)
+library(esquisse)
+
+
+
+```
+
+```{r,  message=FALSE}
+library(readr) #read in the data
+ames_student <- read_csv("ames_student.csv")
+```
+
+```{r results='hide'}
+str(ames_student) #review the data 
+
+```
+```{r}
+#esquisser(ames_student) Helped me visualize which variables might be strong predictors of Above Average
+```
+
+
+
+```{r}
+ames = ames_student%>%dplyr::select(Above_Median,Year_Built,Gr_Liv_Area,  Lot_Area, Full_Bath,Half_Bath, TotRms_AbvGrd, Year_Built,Year_Sold, Three_season_porch,Screen_Porch )
+#These were the variables that I found that seemed to be good predictions of the variable Above_Median 
+
+   
+``` 
+
+```{r}
+ames = ames %>% mutate(Above_Median = as_factor(Above_Median)) 
+  
+ames$TotBath <- ames$Full_Bath+ ames$Half_Bath
+ames$Porch <- ames$Three_season_porch+ames$Screen_Porch
+ames <- ames %>% select(-Full_Bath,-Half_Bath,-Three_season_porch,-Screen_Porch)
+#I decide to add both half bath and full bath together to create total bath as one variable. 
+#I decided that a three season porch and screen porch were similar enough to add them together as one variable
+#Once I created the new variables I subtracted the old variables out of the data set.
+
+```
+
+
+
+
+
+```{r}
+#ggpairs(ames) #So I can visualize my variables on my data set
+```
+
+```{r results='hide'}
+ 
+
+ggplot(ames) +
+  aes(x = TotBath, y = Above_Median) +
+  geom_boxplot(fill = "#112446") +
+  labs(
+    x = "Total number of Bathrooms",
+    y = "Sold Above Median Price",
+    title = "Total Bath"
+  ) +
+  theme_minimal()
+
+ggplot(ames) +
+  aes(x = Year_Built, y = Above_Median) +
+  geom_boxplot(fill = "#112446") +
+  labs(
+    x = "Year Built",
+    y = "Sold Above Median Price ",
+    title = "Year Built"
+  ) +
+  theme_minimal()
+ggplot(ames) +
+  aes(x = Above_Median, y = Lot_Area) +
+  geom_boxplot(fill = "#112446") +
+  labs(
+    x = "Size of Lot",
+    y = "Sold Above Median Price",
+    title = "Size of Lot"
+  ) +
+  theme_minimal()
+ggplot(ames) +
+  aes(x = TotRms_AbvGrd, y = Above_Median) +
+  geom_boxplot(fill = "#112446") +
+  labs(
+    x = "Total Rooms",
+    y = "Sold Above Median Price ",
+    title = "Total Rooms"
+  ) +
+  theme_minimal()
+ggplot(ames) +aes(x = Porch, y =  Above_Median) +
+  geom_col(fill = "#112446") +
+  labs(
+    x = "Porch",
+    y = "Sold Above Median Price ",
+    title = "Porch or 3 Season Room"
+  ) +
+  theme_minimal()
+  
+  theme_minimal()
+ggplot(ames) +
+  aes(x = Above_Median, y = Gr_Liv_Area, ) +
+  geom_col(fill = "#112446") +
+  labs(
+    x = "Total Sq Footage",
+    y = "Sold Above Median Price ",
+    title = "Size of House"
+  ) +
+  theme_minimal()
+
+
+```
+
+
+
+```{r}
+set.seed(123) #spliting in to the testing and training datasets
+#set up the vfolds 
+ames_split = initial_split(ames, prop = 0.7, strata = Above_Median) 
+train = training(ames_split) 
+test = testing(ames_split)
+folds = vfold_cv(train, v = 10)
+```
+
+```{r}
+#creating my classification tree recipe with a complexity model to see the accuracy of the model  
+ames_recipe = recipe(Above_Median ~., train) %>%
+  step_dummy(all_nominal(),-all_outcomes())
+
+tree_model = decision_tree(cost_complexity = tune()) %>% 
+  set_engine("rpart", model = TRUE) %>% 
+  set_mode("classification")
+
+tree_grid = grid_regular(cost_complexity(),
+                          levels = 30)  
+
+ames_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(ames_recipe)
+
+tree_res = 
+  ames_wflow %>% 
+  tune_grid(
+    resamples = folds,
+    grid = tree_grid
+    )
+
+tree_res
+
+```
+
+
+```{r}
+#the graph that shows the accuracy and ROC_AUC
+tree_res %>%
+  collect_metrics() %>%
+  ggplot(aes(cost_complexity, mean)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) 
+```
+```{r}
+#choosing the tree with the best accuracy 
+best_tree = tree_res %>%
+  select_best("accuracy")
+
+best_tree
+```
+
+```{r}
+#finalizing the workflow
+final_wf = 
+  ames_wflow %>% 
+  finalize_workflow(best_tree)
+```
+
+```{r}
+#fitting to the training set
+final_fit = fit(final_wf, train)
+
+tree = final_fit %>% 
+  extract_fit_parsnip() %>% 
+  pluck("fit")
+
+fancyRpartPlot(tree, tweak = 2.2) 
+
+
+
+```
+
+```{r}
+treepred = predict(final_fit, train, type = "class")
+```
+```{r}
+confusionMatrix(treepred$.pred_class,train$Above_Median,positive="Yes")
+```
+
+```{r}
+#making predictions on tje testing set 
+treepred_test = predict(final_fit, test, type = "class")
+head(treepred_test)
+```
+```{r}
+#To see the Confusion Matrix with accuracy sensitivity and Specificity
+confusionMatrix(treepred_test$.pred_class,test$Above_Median,positive="Yes")
+```
+
+
+
+```{r}
+#tuning
+
+ames_recipe = recipe(Above_Median ~., train) %>% 
+  step_dummy(all_nominal(),-all_outcomes())
+
+tree_model = decision_tree(cost_complexity = tune()) %>% 
+  set_engine("rpart", model = TRUE) %>% #don't forget the model = TRUE flag
+  set_mode("classification")
+
+tree_grid = expand.grid(cost_complexity = seq(0.001,0.01,by=0.001))
+
+ames_wflow = 
+  workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(ames_recipe)
+
+tree_res = 
+  ames_wflow %>% 
+  tune_grid(
+    resamples = folds,
+    grid = tree_grid
+    )
+
+tree_res
+
+```
+
+
+```{r}
+#after tuning find the tree with the best accuracy 
+tree_res %>%
+  collect_metrics() %>%
+  ggplot(aes(cost_complexity, mean)) +
+  geom_line(size = 1.5, alpha = 0.6) +
+  geom_point(size = 2) +
+  facet_wrap(~ .metric, scales = "free", nrow = 2) 
+```
+```{r}
+best_tree = tree_res %>%
+  select_best("accuracy")
+
+best_tree
+```
+
+```{r}
+final_wf = 
+  ames_wflow %>% 
+  finalize_workflow(best_tree)
+```
+
+```{r}
+final_fit = fit(final_wf, train)
+
+tree = final_fit %>% 
+  extract_fit_parsnip() %>% 
+  pluck("fit")
+
+fancyRpartPlot(tree, tweak = 2) 
+
+```
+
+
+
+
+
+
+
+`
